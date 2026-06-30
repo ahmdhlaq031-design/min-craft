@@ -1,4 +1,4 @@
-// ====== توليد العالم ======
+// ====== توليد العالم (تدريجي) ======
 class World {
     constructor() {
         this.blocks = {};
@@ -10,17 +10,54 @@ class World {
         this.seaLevel = 62;
         this.generated = false;
         this.spawnPoint = { x: 0, y: 10, z: 0 };
+        this.loadedChunks = new Set();
+        this.playerChunkX = 0;
+        this.playerChunkZ = 0;
+        this.renderDistance = 4; // عدد القطع حول اللاعب
     }
 
-    // ====== توليد العالم بالكامل ======
+    // ====== توليد العالم تدريجياً ======
     generate() {
-        console.log('🌍 جاري توليد العالم...');
-        const start = Date.now();
+        console.log('🌍 جاري توليد العالم تدريجياً...');
+        this.generated = true;
+        
+        // توليد فقط المنطقة المحيطة (3x3 قطع)
+        this.generateChunksAround(0, 0, 2);
+        
+        console.log('✅ تم توليد المنطقة الأولية (3x3 قطع)');
+    }
 
-        // توليد التضاريس
-        for (let x = -this.worldSize / 2; x < this.worldSize / 2; x++) {
-            for (let z = -this.worldSize / 2; z < this.worldSize / 2; z++) {
-                const height = this.getHeight(x, z);
+    // ====== توليد قطع حول موقع معين ======
+    generateChunksAround(cx, cz, radius = 4) {
+        const start = Date.now();
+        let count = 0;
+        
+        for (let dx = -radius; dx <= radius; dx++) {
+            for (let dz = -radius; dz <= radius; dz++) {
+                const chunkX = cx + dx;
+                const chunkZ = cz + dz;
+                const key = `${chunkX},${chunkZ}`;
+                
+                if (!this.loadedChunks.has(key)) {
+                    this.generateChunk(chunkX, chunkZ);
+                    this.loadedChunks.add(key);
+                    count++;
+                }
+            }
+        }
+        
+        const elapsed = ((Date.now() - start) / 1000).toFixed(2);
+        console.log(`✅ تم توليد ${count} قطعة في ${elapsed} ثانية`);
+    }
+
+    // ====== توليد قطعة واحدة (16x16) ======
+    generateChunk(cx, cz) {
+        for (let x = 0; x < 16; x++) {
+            for (let z = 0; z < 16; z++) {
+                const wx = cx * 16 + x;
+                const wz = cz * 16 + z;
+                const height = this.getHeight(wx, wz);
+                
                 for (let y = 0; y <= height; y++) {
                     let blockType = 'stone';
                     if (y === height) {
@@ -28,25 +65,27 @@ class World {
                     } else if (y > height - 4) {
                         blockType = 'dirt';
                     }
-                    this.setBlock(x, y, z, blockType);
+                    this.setBlock(wx, y, wz, blockType);
                 }
             }
         }
-
-        // توليد الأشجار
-        for (let i = 0; i < 50; i++) {
-            const x = Math.floor(Math.random() * this.worldSize) - this.worldSize / 2;
-            const z = Math.floor(Math.random() * this.worldSize) - this.worldSize / 2;
-            const height = this.getHeight(x, z);
-            if (height > 5 && height < 80 && Math.random() < 0.3) {
-                this.generateTree(x, height + 1, z);
+        
+        // أشجار في هذه القطعة
+        if (Math.random() < 0.3) {
+            for (let i = 0; i < 3; i++) {
+                const x = cx * 16 + Math.floor(Math.random() * 16);
+                const z = cz * 16 + Math.floor(Math.random() * 16);
+                const height = this.getHeight(x, z);
+                if (height > 5 && height < 80) {
+                    this.generateTree(x, height + 1, z);
+                }
             }
         }
-
-        // توليد الكائنات
-        for (let i = 0; i < 30; i++) {
-            const x = Math.floor(Math.random() * this.worldSize) - this.worldSize / 2;
-            const z = Math.floor(Math.random() * this.worldSize) - this.worldSize / 2;
+        
+        // كائنات في هذه القطعة
+        if (Math.random() < 0.1) {
+            const x = cx * 16 + Math.floor(Math.random() * 16);
+            const z = cz * 16 + Math.floor(Math.random() * 16);
             const height = this.getHeight(x, z);
             if (height > 0) {
                 const entityType = Math.random() < 0.3 ? 
@@ -55,21 +94,59 @@ class World {
                 this.addEntity(entityType, x, height + 1, z);
             }
         }
+    }
 
-        this.generated = true;
-        const elapsed = ((Date.now() - start) / 1000).toFixed(2);
-        console.log(`✅ تم توليد العالم في ${elapsed} ثانية`);
+    // ====== تحديث القطع عند حركة اللاعب ======
+    updateChunks(playerX, playerZ) {
+        const chunkX = Math.floor(playerX / 16);
+        const chunkZ = Math.floor(playerZ / 16);
+        
+        if (chunkX !== this.playerChunkX || chunkZ !== this.playerChunkZ) {
+            this.playerChunkX = chunkX;
+            this.playerChunkZ = chunkZ;
+            this.generateChunksAround(chunkX, chunkZ, this.renderDistance);
+            this.unloadFarChunks(chunkX, chunkZ, this.renderDistance + 2);
+        }
+    }
+
+    // ====== إزالة القطع البعيدة ======
+    unloadFarChunks(cx, cz, radius) {
+        const toRemove = [];
+        for (const key of this.loadedChunks) {
+            const [chunkX, chunkZ] = key.split(',').map(Number);
+            const dx = chunkX - cx;
+            const dz = chunkZ - cz;
+            if (dx * dx + dz * dz > radius * radius) {
+                toRemove.push(key);
+            }
+        }
+        
+        for (const key of toRemove) {
+            this.loadedChunks.delete(key);
+            // حذف البلوكات من this.blocks
+            const [chunkX, chunkZ] = key.split(',').map(Number);
+            for (let x = 0; x < 16; x++) {
+                for (let z = 0; z < 16; z++) {
+                    for (let y = 0; y < this.maxHeight; y++) {
+                        const wx = chunkX * 16 + x;
+                        const wz = chunkZ * 16 + z;
+                        const blockKey = `${wx},${y},${wz}`;
+                        if (this.blocks[blockKey]) {
+                            delete this.blocks[blockKey];
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // ====== حساب ارتفاع التضاريس ======
     getHeight(x, z) {
-        // استخدام دالة تضاريس بسيطة
         const h1 = Math.sin(x * 0.02) * Math.cos(z * 0.025) * 8;
         const h2 = Math.sin(x * 0.04 + z * 0.03) * 4;
         const h3 = Math.sin(x * 0.01) * Math.sin(z * 0.01) * 10;
         let height = h1 + h2 + h3 + this.seaLevel;
         
-        // جبال عشوائية
         const mountainX = Math.sin(this.seed) * 60;
         const mountainZ = Math.cos(this.seed) * 60;
         const dist = Math.sqrt((x - mountainX) ** 2 + (z - mountainZ) ** 2);
